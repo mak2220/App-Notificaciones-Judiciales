@@ -66,10 +66,14 @@ function LoginContent() {
     }
 
     // Si todo salió bien, guardamos el resultado provisoriamente
-    alert(`¡Bienvenido/a ${datos.usuario.nombre}! Login exitoso.`);
-    
-    // Próximamente: Redireccionar a los dashboards internos
-    // router.push(`/${role}/dashboard`);
+   alert(`¡Bienvenido/a ${datos.usuario.nombre}! Login exitoso.`);
+
+   if (role === 'judicial') {
+     router.push('/judicial/dashboard');
+  // Redirección activa según el portal por el que ingresó
+  } else if (role === 'policia') {
+    router.push('/policia/dashboard');  
+  }
 
   } catch (err: unknown) {
     if (err instanceof Error) {

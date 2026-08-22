@@ -1,31 +1,49 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
-// prisma/schema.prisma
-
-datasource db {
-  provider = "postgresql" // Podés cambiarlo a "mysql" o "sqlite" según tu servidor SQL
-  url      = env("DATABASE_URL")
-}
-
 generator client {
   provider = "prisma-client-js"
 }
 
-// 🏛️ Usuarios del Poder Judicial y Administradores superiores
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
 model Usuario {
-  id             String         @id @default(uuid())
-  nombre         String         // Ej: "Juzgado de Garantías N° 1"
-  email          String         @unique
-  passwordHash   String
-  rol            Rol            // Enum: JUDICIAL o ADMIN
-  fechaCreacion  DateTime       @default(now())
-  
-  // Relación: Un usuario judicial puede haber creado muchas notificaciones
+  id                    String         @id @default(uuid())
+  nombre                String
+  email                 String         @unique
+  passwordHash          String
+  rol                   Rol
+  fechaCreacion         DateTime       @default(now())
   notificacionesCreadas Notificacion[]
+}
+
+model Comisaria {
+  id                      String         @id @default(uuid())
+  nombre                  String
+  direccion               String
+  email                   String         @unique
+  passwordHash            String
+  fechaCreacion           DateTime       @default(now())
+  notificacionesAsignadas Notificacion[]
+}
+
+model Notificacion {
+  id                  String             @id @default(uuid())
+  nroExpediente       String
+  caratula            String
+  destinatario        String
+  domicilio           String
+  pdfUrl              String
+  estado              EstadoNotificacion @default(ENVIADA)
+  fotoComprobanteUrl  String?
+  observaciones       String?
+  fechaCreacion       DateTime           @default(now())
+  fechaActualizada    DateTime           @updatedAt
+  fechaCumplimentada  DateTime?
+  usuarioCreadorId    String
+  comisariaAsignadaId String
+  comisariaAsignada   Comisaria          @relation(fields: [comisariaAsignadaId], references: [id])
+  usuarioCreador      Usuario            @relation(fields: [usuarioCreadorId], references: [id])
 }
 
 enum Rol {
@@ -33,46 +51,9 @@ enum Rol {
   ADMIN
 }
 
-// 👮 Dependencias policiales encargadas de diligenciar el papel
-model Comisaria {
-  id             String         @id @default(uuid())
-  nombre         String         // Ej: "Comisaría Seccional 1ra"
-  direccion      String
-  email          String         @unique
-  passwordHash   String         // Credencial institucional de la seccional
-  fechaCreacion  DateTime       @default(now())
-
-  // Relación: Una comisaría recibe muchas notificaciones
-  notificacionesAsignadas Notificacion[]
-}
-
-// 📄 El corazón de la aplicación: el ciclo de vida de la notificación
-model Notificacion {
-  id                 String       @id @default(uuid())
-  nroExpediente      String       // Número de causa judicial
-  caratula           String       // Nombre de la causa (ej: "Pérez s/ Hurto")
-  destinatario       String       // Persona a notificar
-  domicilio          String       // Dirección física de entrega
-  pdfUrl             String       // Link al documento judicial original
-  estado             EstadoNotificacion @default(ENVIADA)
-  fotoComprobanteUrl String?      // Opcional: Se llena cuando el policía sube la foto
-  observaciones      String?      // Comentarios del policía de calle
-  fechaCreacion      DateTime     @default(now())
-  fechaActualizada   DateTime     @updatedAt
-  fechaCumplimentada DateTime?    // Fecha exacta de finalización legal
-
-  // Relación con el creador (Poder Judicial)
-  usuarioCreadorId   String
-  usuarioCreador     Usuario      @relation(fields: [usuarioCreadorId], references: [id])
-
-  // Relación con la Comisaría asignada
-  comisariaAsignadaId String
-  comisariaAsignada   Comisaria    @relation(fields: [comisariaAsignadaId], references: [id])
-}
-
 enum EstadoNotificacion {
-  ENVIADA          // El juzgado la creó y mandó
-  IMPRESA          // La comisaría la descargó/imprimió
-  CUMPLIMENTADA    // Positivo: Foto cargada y diligencia hecha
-  FRUSTRADA        // Negativo: No se encontró la persona / domicilio inexistente
+  ENVIADA
+  IMPRESA
+  CUMPLIMENTADA
+  FRUSTRADA
 }

@@ -37,11 +37,12 @@ async function main() {
   });
   console.log(`⚖️ Usuario Judicial creado: ${juzgado.email}`);
 
-  // 3. Crear una Comisaría de prueba
+  // 3. Crear una Comisaría de prueba (Forzamos tu UUID real de Neon)
   const comisaria = await prisma.comisaria.upsert({
-    where: { email: 'seccional1@policia.gov.ar' },
+    where: { id: '315acb5c-ac71-4abc-94c3-083f8e7c01cd' }, // 👈 Forzamos tu ID real de Neon
     update: {},
     create: {
+      id: '315acb5c-ac71-4abc-94c3-083f8e7c01cd',
       nombre: 'Comisaría Seccional Primera',
       direccion: 'Calle Falsa 123, Centro',
       email: 'seccional1@policia.gov.ar',
@@ -49,6 +50,30 @@ async function main() {
     },
   });
   console.log(`👮 Dependencia Policial creada: ${comisaria.nombre}`);
+
+  // 4. NUEVO: Crear la Notificación vinculada con el PDF de prueba permanente
+  // Usamos un upsert simulado buscando por el número de expediente de la causa
+  const expedientePrueba = 'Expe-12345/2026';
+  
+  // Limpiamos notificaciones previas con ese expediente para evitar duplicaciones en la grilla
+  await prisma.notificacion.deleteMany({
+    where: { nroExpediente: expedientePrueba }
+  });
+
+  const notificacion = await prisma.notificacion.create({
+    data: {
+      nroExpediente: expedientePrueba,
+      caratula: 'Juancho Carancho / Causa de Prueba Piloto',
+      destinatario: 'Gómez Carlos Alberto',
+      domicilio: 'Av. Belgrano 1234, Planta Alta, Chajarí',
+      // 👈 URL permanente y segura que no deriva a GoDaddy
+      pdfUrl: 'https://unec.edu.az', 
+      estado: 'ENVIADA',
+      usuarioCreadorId: juzgado.id,
+      comisariaAsignadaId: comisaria.id,
+    },
+  });
+  console.log(`📄 Notificación de prueba creada para el expediente: ${notificacion.nroExpediente}`);
 
   console.log('✅ ¡Datos de prueba cargados con éxito!');
 }
@@ -61,3 +86,4 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
+
