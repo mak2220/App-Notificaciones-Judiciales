@@ -1,4 +1,4 @@
-// src/app/judicial/dashboard/page.tsx
+//app/judicial/dashboard/page.tsx
 'use client';
 
 import { useState, useEffect, FormEvent } from 'react';
@@ -26,10 +26,13 @@ export default function JudicialDashboard() {
   const [destinatario, setDestinatario] = useState('');
   const [domicilio, setDomicilio] = useState('');
   const [comisariaId, setComisariaId] = useState('');
+  // 📎 NUEVO ESTADO: Guarda el archivo seleccionado en la computadora antes de enviarlo
+  const [documentoJudicial, setDocumentoJudicial] = useState<File | null>(null);
   
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ texto: '', tipo: '' });
 
+   // 👈 NUEVO: Reinsertamos la función perdida que exige el botón de actualizar
   const refrescarDatos = async () => {
     try {
       const res = await fetch('/api/judicial/notificaciones');
@@ -39,10 +42,9 @@ export default function JudicialDashboard() {
         setNotificaciones(data.notificaciones || []);
       }
     } catch (err) {
-      console.error('Error refrescando datos', err);
+      console.error('Error refrescando datos desde el panel', err);
     }
   };
-
 
   useEffect(() => {
     let activo = true;
@@ -69,22 +71,34 @@ export default function JudicialDashboard() {
     };
   }, []);
 
+  // 🚀 FUNCIÓN ACTUALIZADA: Envía los campos de texto junto al archivo binario mediante FormData
   const handleCrearNotificacion = async (e: FormEvent) => {
     e.preventDefault();
+    
+    // Validación de seguridad para obligar al usuario a cargar la cédula papel o digital
+    if (!documentoJudicial) {
+      setMensaje({ texto: '⚠️ Es obligatorio adjuntar el documento judicial original (PDF o Word).', tipo: 'error' });
+      return;
+    }
+
     setLoading(true);
     setMensaje({ texto: '', tipo: '' });
 
     try {
+      // Usamos FormData para dar soporte multimedia a la transferencia de datos
+      const formData = new FormData();
+      formData.append('nroExpediente', nroExpediente);
+      formData.append('caratula', caratula);
+      formData.append('destinatario', destinatario);
+      formData.append('domicilio', domicilio);
+      formData.append('comisariaAsignadaId', comisariaId);
+      formData.append('documentoJudicial', documentoJudicial); // 👈 El archivo binario original
+
       const res = await fetch('/api/judicial/notificaciones', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nroExpediente,
-          caratula,
-          destinatario,
-          domicilio,
-          comisariaAsignadaId: comisariaId,
-        }),
+        // NOTA: Cuando se envía FormData, NO se debe definir el header 'Content-Type'. 
+        // El navegador lo configura de forma automática incluyendo los límites boundary del archivo.
+        body: formData, 
       });
 
       const data = await res.json();
@@ -96,11 +110,18 @@ export default function JudicialDashboard() {
       const nueva = data.notificacion as Notificacion;
       setNotificaciones((prev) => [nueva, ...prev]);
 
+      // Limpieza completa del panel izquierdo tras el éxito
       setNroExpediente('');
       setCaratula('');
       setDestinatario('');
       setDomicilio('');
       setComisariaId('');
+      setDocumentoJudicial(null);
+      
+      // Reseteamos visualmente el selector de archivos de la PC de forma manual
+      const fileInput = document.getElementById('file-input-cedula') as HTMLInputElement;
+      if (fileInput) fileInput.value = '';
+
     } catch (err: unknown) {
       if (err instanceof Error) {
         setMensaje({ texto: err.message, tipo: 'error' });
@@ -110,7 +131,8 @@ export default function JudicialDashboard() {
     }
   };
 
-  return (
+
+    return (
     <div className="min-h-screen bg-slate-50 p-6">
       <header className="max-w-7xl mx-auto mb-8 flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-slate-200">
         <div>
@@ -180,6 +202,25 @@ export default function JudicialDashboard() {
                   <option key={c.id} value={c.id}>{c.nombre}</option>
                 ))}
               </select>
+            </div>
+            {/* 📎 ADJUNTAR EXPEDIENTE DIGITAL DESDE LA PC (CORREGIDO) */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                📎 Adjuntar Documento Judicial Original
+              </label>
+              <input 
+                id="file-input-cedula"
+                type="file" 
+                required
+                accept=".pdf,.doc,.docx"
+                onChange={(e) => {
+                  const lista = e.target.files;
+                  if (lista && lista.length > 0) {
+                    setDocumentoJudicial(lista[0]); // Extracción segura por índice directo sin conflictos
+                  }
+                }}
+                className="w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border rounded-lg p-1"
+              />
             </div>
 
             <div className="flex gap-2 pt-2">

@@ -1,25 +1,20 @@
-// src/app/api/judicial/notificaciones/route.ts
 import { NextResponse } from 'next/server';
-import prisma from '@/lib/db';
-
-// GET: Trae todas las comisarías para el formulario de carga
-// REEMPLAZÁ SOLO EL BLOQUE GET EN src/app/api/judicial/notificaciones/route.ts
+import { prisma } from '@/lib/prisma';
+import { put } from '@vercel/blob';
+import crypto from 'crypto';
 
 // GET: Trae todas las comisarías AND las notificaciones existentes
 export async function GET() {
   try {
-    // 1. Traemos las comisarías para el formulario desplegable
     const comisarías = await prisma.comisaria.findMany({
       select: { id: true, nombre: true },
       orderBy: { nombre: 'asc' },
     });
 
-    // 2. Traemos todas las notificaciones con los datos de la comisaría asignada
     const notificaciones = await prisma.notificacion.findMany({
-      orderBy: { fechaCreacion: 'desc' }, // Las más nuevas primero
+      orderBy: { fechaCreacion: 'desc' },
     });
 
-    // Devolvemos ambos listados agrupados en un objeto JSON
     return NextResponse.json({ comisarías, notificaciones });
   } catch (error) {
     console.error('❌ Error al obtener datos judiciales:', error);
@@ -30,15 +25,19 @@ export async function GET() {
 // POST: Crea una nueva notificación enviada por el juzgado
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const { nroExpediente, caratula, destinatario, domicilio, comisariaAsignadaId } = body;
+    const formData = await request.formData();
+    
+    const nroExpediente = formData.get('nroExpediente') as string;
+    const caratula = formData.get('caratula') as string;
+    const destinatario = formData.get('destinatario') as string;
+    const domicilio = formData.get('domicilio') as string;
+    const comisariaAsignadaId = formData.get('comisariaAsignadaId') as string;
+    const archivoDoc = formData.get('documentoJudicial') as File;
 
-    // Validamos campos requeridos (Removimos usuarioCreadorId porque lo buscamos acá abajo)
-    if (!nroExpediente || !caratula || !destinatario || !domicilio || !comisariaAsignadaId) {
-      return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 });
+    if (!nroExpediente || !caratula || !destinatario || !domicilio || !comisariaAsignadaId || !archivoDoc) {
+      return NextResponse.json({ error: 'Faltan campos obligatorios o el documento judicial' }, { status: 400 });
     }
 
-    // TAREA PENDIENTE: Antes de crear la notificación, buscamos un usuario judicial real en la DB
     const usuarioJudicial = await prisma.usuario.findFirst({
       where: { rol: 'JUDICIAL' }
     });
@@ -47,7 +46,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'No hay usuarios judiciales configurados' }, { status: 500 });
     }
 
-    // Guardamos en la base de datos de Neon vía Prisma usando el ID real encontrado
+    let documentoUrl = "";
+    if (archivoDoc.size > 0) {
+      const nombreArchivoLimpio = `cedula-${nroExpediente.replace(/[/ ]/g, '-')}-${Date.now()}.${archivoDoc.name.split('.').pop()}`;
+      
+      const blobRealizado = await put(nombreArchivoSanitizado(nombreArchivoLimpio), archivoDoc, {
+        access: 'private', 
+      });
+      documentoUrl = blobRealizado.url;
+    } else {
+      return NextResponse.json({ error: 'El archivo adjunto se encuentra vacío' }, { status: 400 });
+    }
+
     const nuevaNotificacion = await prisma.notificacion.create({
       data: {
         nroExpediente,
@@ -55,15 +65,31 @@ export async function POST(request: Request) {
         destinatario,
         domicilio,
         comisariaAsignadaId,
-        usuarioCreadorId: usuarioJudicial.id, // Usamos el id real encontrado en la DB
-        pdfUrl: 'https://ejemplo.com', // Simulación temporal de archivo
+        usuarioCreadorId: usuarioJudicial.id,
+        pdfUrl: documentoUrl,
         estado: 'ENVIADA',
       },
     });
 
+    const nuevoIdLog = crypto.randomUUID();
+    const detallesLog = `Cédula emitida formalmente por el Juzgado. Documento alojado en el repositorio central de Vercel Blob.`;
+    
+    await prisma.$executeRaw`
+      INSERT INTO "AuditLog" (id, accion, detalles, "notificacionId", "usuarioId", fecha)
+      VALUES (${nuevoIdLog}, 'EMISION_CEDULA', ${detallesLog}, ${nuevaNotificacion.id}, ${usuarioJudicial.id}, NOW())
+    `;
+
     return NextResponse.json({ success: true, notificacion: nuevaNotificacion }, { status: 201 });
   } catch (error) {
-    console.error('❌ Error al crear la notificación:', error); // Usamos la variable para cumplir con ESLint
-    return NextResponse.json({ error: 'Error al crear la notificación' }, { status: 500 });
+    console.error('❌ Error al crear la notificación:', error);
+    return NextResponse.json({ error: 'Error interno al procesar la notificación' }, { status: 500 });
   }
 }
+
+function nombreArchivoSanitizado(nombre: string): string {
+  return nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+
+
+
