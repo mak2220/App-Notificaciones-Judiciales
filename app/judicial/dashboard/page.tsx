@@ -15,7 +15,10 @@ interface Notificacion {
   destinatario: string;
   domicilio: string;
   estado: 'ENVIADA' | 'IMPRESA' | 'CUMPLIMENTADA' | 'FRUSTRADA';
+  pdfUrl: string; 
+  fotoComprobanteUrl?: string | null;
 }
+
 
 export default function JudicialDashboard() {
   const [comisarias, setComisarias] = useState<Comisaria[]>([]);
@@ -28,7 +31,19 @@ export default function JudicialDashboard() {
   const [comisariaId, setComisariaId] = useState('');
   // 📎 NUEVO ESTADO: Guarda el archivo seleccionado en la computadora antes de enviarlo
   const [documentoJudicial, setDocumentoJudicial] = useState<File | null>(null);
-  
+    // 🔍 NUEVO ESTADO: Para capturar el número de expediente a destacar
+  const [expedienteBuscado, setExpedienteBuscado] = useState('');
+  const notificacionesOrdenadas = [...notificaciones].sort((a, b) => {
+ 
+    if (expedienteBuscado.trim() !== '') {
+      const coincideA = a.nroExpediente.toLowerCase().includes(expedienteBuscado.toLowerCase());
+      const coincideB = b.nroExpediente.toLowerCase().includes(expedienteBuscado.toLowerCase());
+      if (coincideA && !coincideB) return -1;
+      if (!coincideA && coincideB) return 1;
+    }
+    return 0; 
+  });
+
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ texto: '', tipo: '' });
 
@@ -241,9 +256,45 @@ export default function JudicialDashboard() {
           </form>
         </section>
 
-        {/* Panel de Monitoreo Dinámico */}
+                {/* Panel de Monitoreo Dinámico */}
         <section className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 lg:col-span-2 overflow-hidden">
-          <h2 className="text-lg font-bold text-slate-800 mb-4 border-b pb-2">Control de Cédulas Enviadas</h2>
+          
+          {/* CABECERA CON CONTROLES DE BÚSQUEDA Y FILTRADO */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3 mb-4">
+            <h2 className="text-lg font-bold text-slate-800">Control de Cédulas Enviadas</h2>
+            
+            {/* 🔍 CUADRO DE BÚSQUEDA FLOTANTE */}
+            <div className="relative w-full sm:w-72">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400 text-xs">
+                🔍
+              </span>
+              <input
+                type="text"
+                value={expedienteBuscado}
+                onChange={(e) => setExpedienteBuscado(e.target.value)}
+                placeholder="Buscar y destacar expediente..."
+                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-800 transition-all placeholder:text-slate-400"
+              />
+              {expedienteBuscado.trim() !== '' && (
+                <button
+                  type="button"
+                  onClick={() => setExpedienteBuscado('')}
+                  className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                  title="Limpiar búsqueda"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* INDICADOR DE REORDENAMIENTO ACTIVO */}
+          {expedienteBuscado.trim() !== '' && (
+            <div className="mb-3 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-xs font-medium text-blue-700 flex items-center gap-1.5 animate-pulse">
+              <span className="w-1.5 h-1.5 bg-blue-600 rounded-full"></span>
+              Orden dinámico activo: Expedientes coincidentes priorizados en el primer lugar.
+            </div>
+          )}
           
           {notificaciones.length === 0 ? (
             <div className="text-center py-12 text-slate-400 text-sm">
@@ -259,24 +310,107 @@ export default function JudicialDashboard() {
                     <th className="p-3">Destinatario</th>
                     <th className="p-3">Dirección</th>
                     <th className="p-3 text-center">Estado</th>
+                    <th className="p-3 text-right">Acciones</th> 
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {notificaciones.map((n) => (
-                    <tr key={n.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="p-3">
-                        <div className="font-bold text-slate-800">{n.nroExpediente}</div>
-                        <div className="text-xs text-slate-500 max-w-37.5 truncate">{n.caratula}</div>
-                      </td>
-                      <td className="p-3 text-slate-700 font-medium">{n.destinatario}</td>
-                      <td className="p-3 text-slate-500 text-xs">{n.domicilio}</td>
-                      <td className="p-3 text-center">
-                        <span className="px-2.5 py-1 text-xs font-bold rounded-full bg-blue-100 text-blue-800 border border-blue-200">
-                          {n.estado}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {notificacionesOrdenadas.map((n) => {
+                    const esDestacada = expedienteBuscado.trim() !== '' && 
+                      n.nroExpediente.toLowerCase().includes(expedienteBuscado.toLowerCase());
+                    return (
+                      <tr 
+                        key={n.id} 
+                        className={`transition-all border-b border-slate-100 ${
+                          esDestacada 
+                            ? 'bg-blue-50/90 hover:bg-blue-100/90 border-l-4 border-l-blue-600 font-medium' 
+                            : 'hover:bg-slate-50/80'
+                        }`}
+                      >
+                        <td className="p-3">
+                          <div className="font-bold text-slate-800">{n.nroExpediente}</div>
+                          <div className="text-xs text-slate-500 max-w-37.5 truncate">{n.caratula}</div>
+                        </td>
+                        <td className="p-3 text-slate-700 font-medium">{n.destinatario}</td>
+                        <td className="p-3 text-slate-500 text-xs">{n.domicilio}</td>
+                        <td className="p-3 text-center">
+                          <span className={`px-2.5 py-1 text-xs font-bold rounded-full border ${
+                            n.estado === 'ENVIADA' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                            n.estado === 'IMPRESA' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                            n.estado === 'CUMPLIMENTADA' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            'bg-rose-50 text-rose-700 border-rose-200'
+                          }`}>
+                            {n.estado}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right">
+                          {n.pdfUrl ? (
+                            <button 
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const res = await fetch(`/api/judicial/download?url=${encodeURIComponent(n.pdfUrl)}`);
+                                  if (!res.ok) {
+                                    alert('No se pudo autorizar la lectura del documento.');
+                                    return;
+                                  }
+                                  const archivoBlob = await res.blob();
+                                  const urlDescargaUrl = window.URL.createObjectURL(archivoBlob);
+                                  const enlaceTemporal = document.createElement('a');
+                                  enlaceTemporal.href = urlDescargaUrl;
+                                  enlaceTemporal.download = n.pdfUrl.split('/').pop() || 'documento-judicial';
+                                  document.body.appendChild(enlaceTemporal);
+                                  enlaceTemporal.click();
+                                  document.body.removeChild(enlaceTemporal);
+                                  window.URL.revokeObjectURL(urlDescargaUrl);
+                                } catch (err) {
+                                  console.error(err);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 text-xs bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 font-medium py-1.5 px-3 rounded-lg border border-slate-200 hover:border-blue-200 transition-colors cursor-pointer shadow-sm"
+                            >
+                              📄 Ver Documento
+                            </button>
+                          ) : (
+                            <span className="text-xs text-slate-400 italic">Sin archivo</span>
+                          )}
+                          {/* Botón 2: 📷 CONTROL DE AUDITORÍA (Acta firmada en la calle por la Policía) */}
+                          {(n.estado === 'CUMPLIMENTADA' || n.estado === 'FRUSTRADA') && (
+                            n.fotoComprobanteUrl ? (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const res = await fetch(`/api/judicial/download?url=${encodeURIComponent(n.fotoComprobanteUrl!)}`);
+                                    if (!res.ok) {
+                                      alert('No se pudo leer la firma digitalizada del acta.');
+                                      return;
+                                    }
+                                    const archivoBlob = await res.blob();
+                                    const urlDescargaUrl = window.URL.createObjectURL(archivoBlob);
+                                    const enlaceTemporal = document.createElement('a');
+                                    enlaceTemporal.href = urlDescargaUrl;
+                                    enlaceTemporal.download = n.fotoComprobanteUrl!.split('/').pop() || 'acta-diligencia';
+                                    document.body.appendChild(enlaceTemporal);
+                                    enlaceTemporal.click();
+                                    document.body.removeChild(enlaceTemporal);
+                                    window.URL.revokeObjectURL(urlDescargaUrl);
+                                  } catch (err) {
+                                    console.error(err);
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1.5 px-3 rounded-lg transition-colors cursor-pointer shadow-sm border border-emerald-700"
+                                title="Descargar acta firmada digitalizada por la comisaría"
+                              >
+                                📷 Acta Digital
+                              </button>
+                            ) : (
+                              <span className="text-xs text-slate-400 italic font-normal">Sin acta cargada</span>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
