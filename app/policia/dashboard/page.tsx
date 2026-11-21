@@ -1,8 +1,10 @@
 import { redirect } from 'next/navigation' 
-import { prisma } from '@/lib/prisma'
+import { prisma } from '@/lib/db'
 import { revalidatePath } from 'next/cache'
 import crypto from 'crypto'
+import Link from 'next/link'
 import { put } from '@vercel/blob'
+import { TablaCedulasPolicia } from '@/app/components/TablasCedulasPolicia'
 
 interface NotificacionConCreador {
   id: string
@@ -11,6 +13,7 @@ interface NotificacionConCreador {
   destinatario: string
   domicilio: string
   pdfUrl: string
+  fotoComprobanteUrl: string | null
   estado: 'ENVIADA' | 'IMPRESA' | 'CUMPLIMENTADA' | 'FRUSTRADA'
   usuarioCreador: {
     nombre: string
@@ -32,25 +35,34 @@ async function marcarComoImpresa(formData: FormData) {
   const comisariaId = "315acb5c-ac71-4abc-94c3-083f8e7c01cd" 
   const nuevoIdLog = crypto.randomUUID()
 
-  // Paso 1: Actualizar el estado de la notificación de forma segura y nativa
-  await prisma.notificacion.update({
+  const notificacionExistente = await prisma.notificacion.findUnique({
     where: { id: notificacionId },
-    data: { estado: 'IMPRESA' }
+    select: { pdfUrl: true }
   })
 
-  // Paso 2: Crear el registro de auditoría ejecutando una consulta SQL pura
-  await prisma.$executeRaw`
-    INSERT INTO "AuditLog" (id, accion, detalles, "notificacionId", "comisariaId", fecha)
-    VALUES (
-      ${nuevoIdLog},
-      'IMPRESA_POLICIA', 
-      'La comisaria descargo / imprimio la cedula fisica para ir a la calle.', 
-      ${notificacionId}, 
-      ${comisariaId}, 
-      NOW()
-    )
-  `
+  await prisma.notificacion.update({
+    where: { id: notificacionId },
+    data: { 
+      estado: 'IMPRESA',
+      historialEstados: { create: { estado: 'IMPRESA' } }
+    }
+  })
+
+  await prisma.auditLog.create({
+    data: {
+      id: nuevoIdLog,
+      accion: 'IMPRESA_POLICIA',
+      detalles: 'La comisaria descargo / imprimio la cedula.',
+      notificacionId: notificacionId,
+      usuarioId: comisariaId,
+    }
+  })
+
   revalidatePath('/policia/dashboard')
+
+  if (notificacionExistente && notificacionExistente.pdfUrl) {
+    redirect(notificacionExistente.pdfUrl)
+  }
 }
 
 // 2. ACCIÓN: Cerrar la Cédula (CUMPLIMENTADA o FRUSTRADA)
@@ -59,44 +71,56 @@ async function resolverNotificacion(formData: FormData) {
   const id = formData.get('id') as string
   const nuevoEstado = formData.get('estado') as 'CUMPLIMENTADA' | 'FRUSTRADA'
   const observaciones = formData.get('observaciones') as string
+  const file = formData.get('comprobanteFoto') as File
   const comisariaId = "315acb5c-ac71-4abc-94c3-083f8e7c01cd" 
   const nuevoIdLog = crypto.randomUUID()
 
-  // Paso 1: Actualizar el estado y el informe técnico de la cédula en Neon DB
+  let fotoComprobanteUrl: string | undefined = undefined
+
+  if (file && file.size > 0) {
+    const blob = await put(`comprobantes/${crypto.randomUUID()}-${file.name}`, file, {
+      access: 'private',
+    })
+    fotoComprobanteUrl = blob.url
+  }
+
   await prisma.notificacion.update({
     where: { id },
     data: {
       estado: nuevoEstado,
       observaciones,
-      fechaCumplimentada: new Date()
+      fechaCumplimentada: new Date(),
+      ...(fotoComprobanteUrl && { fotoComprobanteUrl }),
+      historialEstados: { create: { estado: nuevoEstado } }
     }
   })
 
-  // Definir las etiquetas del log legal según el botón seleccionado por el oficial
   const accionLog = nuevoEstado === 'CUMPLIMENTADA' ? 'DILIGENCIA_POSITIVA' : 'DILIGENCIA_FRUSTRADA'
-  const detallesLog = `Resultado final cargado por la seccional. Observaciones: ${observaciones}`
+  const detallesLog = `Resultado cargado. Observaciones: ${observaciones}`
 
-  // Paso 2: Grabar la auditoría inmutable directamente con SQL Puro en PostgreSQL
-  await prisma.$executeRaw`
-    INSERT INTO "AuditLog" (id, accion, detalles, "notificacionId", "comisariaId", fecha)
-    VALUES (
-      ${nuevoIdLog},
-      ${accionLog}, 
-      ${detallesLog}, 
-      ${id}, 
-      ${comisariaId}, 
-      NOW()
-    )
-  `  
+  await prisma.auditLog.create({
+    data: {
+      id: nuevoIdLog,
+      accion: accionLog,
+      detalles: detallesLog,
+      notificacionId: id,
+      usuarioId: comisariaId,
+    }
+  })
+
   revalidatePath('/policia/dashboard')
-  // 👈 NUEVO: Al redireccionar a la ruta limpia, el formulario de la izquierda se vacía por completo al instante
   redirect('/policia/dashboard') 
 }
 
+// 3. ACCIÓN: Cerrar sesión desde el Servidor
+async function procesarCerrarSesion() {
+  'use server'
+  redirect('/')
+}
 export default async function PoliciaDashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ id?: string }>
+  searchParams: Promise<{ id?: string; ver?: string }>
 }) {
   const params = await searchParams
   const miComisariaId = "315acb5c-ac71-4abc-94c3-083f8e7c01cd"
@@ -113,6 +137,9 @@ export default async function PoliciaDashboard({
     ? notificaciones.find((n: NotificacionConCreador) => n.id === params.id)
     : null
 
+  const archivoAVer = params.ver || null
+  const esWord = archivoAVer?.endsWith('.docx') || archivoAVer?.endsWith('.doc')
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 antialiased">
       {/* BARRA SUPERIOR INSTITUCIONAL */}
@@ -123,9 +150,15 @@ export default async function PoliciaDashboard({
           </h1>
           <p className="text-xs text-slate-500">Seccional Interviniente - En línea</p>
         </div>
-        <button className="text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg transition-colors">
-          Cerrar Sesión
-        </button>
+
+        <form action={procesarCerrarSesion}>
+          <button 
+            type="submit" 
+            className="text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 px-4 py-2 rounded-lg transition-colors"
+          >
+            Cerrar Sesión
+          </button>
+        </form>
       </header>
 
       {/* DISEÑO DE PANTALLA PARTIDA DE DOS COLUMNAS */}
@@ -168,7 +201,6 @@ export default async function PoliciaDashboard({
                 </select>
               </div>
 
-              {/* 📷 NUEVO CAMPO: ADJUNTAR ACTA / FOTO DEL COMPROBANTE PAPEL */}
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
                   📸 Adjuntar Acta Digitalizada / Foto de Firma
@@ -176,8 +208,8 @@ export default async function PoliciaDashboard({
                 <input 
                   type="file" 
                   name="comprobanteFoto"
-                  accept="image/*,application/pdf" // Permite sacar fotos directas con la cámara del celular o subir PDFs
-                  className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded-lg p-1.5"
+                  accept="image/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded-lg p-1.5 bg-white"
                 />
               </div>
 
@@ -202,6 +234,15 @@ export default async function PoliciaDashboard({
                   📄 Descargar Documento Judicial Original
                 </a>
 
+                {notificacionSeleccionada.fotoComprobanteUrl && (
+                  <Link 
+                    href={`?id=${notificacionSeleccionada.id}&ver=${encodeURIComponent(notificacionSeleccionada.fotoComprobanteUrl)}`}
+                    className="block text-center text-xs font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 py-2 rounded-lg mb-3 transition-colors border border-emerald-200"
+                  >
+                    👁️ Ver Acta Digitalizada Cargada
+                  </Link>
+                )}
+
                 <button 
                   type="submit" 
                   className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm py-2.5 px-4 rounded-lg transition-colors shadow-sm"
@@ -216,8 +257,11 @@ export default async function PoliciaDashboard({
             </div>
           )}
         </section>
-
-        {/* COLUMNA DERECHA: CONTROL DE CÉDULAS RECIBIDAS */}
+        <TablaCedulasPolicia 
+          notificaciones={notificaciones} 
+          seleccionadaId={params.id} 
+        />
+                {/* COLUMNA DERECHA: CONTROL DE CÉDULAS RECIBIDAS 
         <section className="lg:col-span-8 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
           <h2 className="text-lg font-bold text-slate-900 border-b pb-3 mb-4">
             Control de Cédulas Recibidas
@@ -245,56 +289,65 @@ export default async function PoliciaDashboard({
                   return (
                     <tr 
                       key={n.id} 
-                      className={`transition-colors border-b border-slate-100 cursor-pointer ${
-                        esSeleccionada ? 'bg-blue-50/60 hover:bg-blue-50/80' : 'hover:bg-slate-50/80'
+                      className={`transition-colors border-b border-slate-100 ${
+                        esSeleccionada ? 'bg-blue-50/60' : 'hover:bg-slate-50/80'
                       }`}
                     >
-                      {/* Usamos padding cero en la celda y padding real en el enlace para que ocupe todo el espacio clickeable */}
-                      <td className="p-0">
-                        <a href={`?id=${n.id}`} className="block py-4 px-4 font-mono text-xs font-semibold text-slate-600 w-full h-full">
-                          {n.nroExpediente}
-                        </a>
+                      <td className="py-4 px-4 font-mono text-xs font-semibold text-slate-600">
+                        <Link href={`?id=${n.id}`} className="block w-full h-full">{n.nroExpediente}</Link>
                       </td>
                       
-                      <td className="p-0">
-                        <a href={`?id=${n.id}`} className="block py-4 px-4 w-full h-full">
+                      <td className="py-4 px-4">
+                        <Link href={`?id=${n.id}`} className="block w-full h-full">
                           <p className="font-medium text-slate-900">{n.caratula}</p>
                           <p className="text-xs text-slate-400">{n.usuarioCreador?.nombre}</p>
-                        </a>
+                        </Link>
                       </td>
                     
-                      <td className="p-0">
-                        <a href={`?id=${n.id}`} className="block py-4 px-4 w-full h-full">
+                      <td className="py-4 px-4">
+                        <Link href={`?id=${n.id}`} className="block w-full h-full">
                           <p className="text-slate-700">{n.destinatario}</p>
                           <p className="text-xs text-slate-400 truncate max-w-[200px]">{n.domicilio}</p>
-                        </a>
+                        </Link>
                       </td>
                     
-                      <td className="p-0 text-center">
-                        <a href={`?id=${n.id}`} className="block py-4 px-4 w-full h-full">
+                      <td className="py-4 px-4 text-center">
+                        <div className="flex flex-col items-center gap-1.5">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${obtenerEstilosBadge(n.estado)}`}>
                             {n.estado}
                           </span>
-                        </a>
+                          {n.fotoComprobanteUrl && (
+                            <Link 
+                              href={`?id=${n.id}&ver=${encodeURIComponent(n.fotoComprobanteUrl)}`}
+                              className="text-xs text-blue-600 underline font-medium hover:text-blue-800 flex items-center gap-0.5"
+                            >
+                              📎 Ver acta
+                            </Link>
+                          )}
+                        </div>
                       </td>
-                    
-                      {/* Las acciones de los botones quedan aisladas en su propia celda */}
-                      <td className="py-4 px-4 text-right space-x-2 align-middle">
-                        {n.estado === 'ENVIADA' && (
-                          <form action={marcarComoImpresa} className="inline-block">
-                            <input type="hidden" name="notificacionId" value={n.id} />
-                            <button type="submit" className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1.5 rounded font-medium transition-colors cursor-pointer">
-                              🖨️ Imprimir
-                            </button>
-                          </form>
-                        )}
-                        
-                        <a 
-                          href={`?id=${n.id}`}
-                          className="inline-block text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded font-medium transition-colors shadow-sm"
-                        >
-                          Procesar
-                        </a>
+
+                      <td className="py-4 px-4 text-right align-middle">
+                        <div className="flex flex-col items-end gap-2">
+                          <div className="flex items-center gap-2">
+                            {n.estado === 'ENVIADA' && (
+                              <a 
+                                href={`/api/policia/descargar?id=${n.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow-sm inline-block cursor-pointer"
+                              >
+                                🖨️ Imprimir
+                              </a>
+                            )}
+                            <Link 
+                              href={`?id=${n.id}`}
+                              className="inline-block text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg font-medium transition-colors shadow-sm"
+                            >
+                              Procesar
+                            </Link>
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -303,10 +356,53 @@ export default async function PoliciaDashboard({
               </table>
             </div>
           )}
-        </section>
-
+        </section>*/}
       </main>
+
+      {/* MODAL VISUALIZADOR DE ACTAS */}
+      {archivoAVer && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] flex flex-col border border-slate-200 overflow-hidden">
+            
+            <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                📄 Visualización de Documento Adjunto
+              </h3>
+              <Link 
+                href={params.id ? `?id=${params.id}` : "/policia/dashboard"} 
+                className="text-slate-400 hover:text-slate-600 bg-white border border-slate-200 rounded-md p-1 px-2.5 text-xs font-semibold shadow-xs"
+              >
+                Cerrar ✕
+              </Link>
+            </div>
+
+            <div className="p-4 flex-1 bg-slate-100 overflow-y-auto flex items-center justify-center min-h-[450px]">
+              {esWord ? (
+                <div className="text-center p-8 bg-white border rounded-xl max-w-sm shadow-xs">
+                  <p className="text-slate-700 font-medium mb-3 text-sm">
+                    Los archivos de Word (.doc / .docx) no se pueden previsualizar de forma nativa en el navegador.
+                  </p>
+                  <a 
+                    href={archivoAVer} 
+                    download
+                    className="inline-block bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs px-4 py-2 rounded-lg transition-colors shadow-sm"
+                  >
+                    ⬇️ Descargar archivo Word
+                  </a>
+                </div>
+              ) : (
+                <iframe 
+                  src={archivoAVer} 
+                  className="w-full h-[60vh] rounded-lg border border-slate-300 bg-white"
+                  title="Visor de Acta PDF"
+                />
+              )}
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
-

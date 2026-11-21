@@ -44,7 +44,33 @@ model Notificacion {
   comisariaAsignadaId String
   comisariaAsignada   Comisaria          @relation(fields: [comisariaAsignadaId], references: [id])
   usuarioCreador      Usuario            @relation(fields: [usuarioCreadorId], references: [id])
+  historialEstados    HistorialEstado[]
 }
+
+model HistorialEstado {
+  id             String       @id @default(uuid())
+  notificacionId String
+  estado         String       // Almacena 'ENVIADA', 'IMPRESA', 'CUMPLIMENTADA', etc.
+  fechaHora      DateTime     @default(now()) // Registra la fecha y hora automática en Neon
+  
+  notificacion   Notificacion @relation(fields: [notificacionId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id             String       @id @default(uuid())
+  accion         String
+  detalles       String
+  notificacionId String?
+  usuarioId      String?
+  fecha          DateTime     @default(now())
+}
+
+model playing_with_neon {
+  id    Int    @id @default(autoincrement())
+  value String
+}
+
+
 
 enum Rol {
   JUDICIAL

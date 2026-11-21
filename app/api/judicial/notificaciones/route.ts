@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '@/lib/db';
+import type { Prisma } from '@prisma/client';
 import { put } from '@vercel/blob';
 import crypto from 'crypto';
 
-// GET: Trae todas las comisarías AND las notificaciones existentes
+// GET: Trae todas las comisarías AND las notificaciones existentes con su HISTORIAL
 export async function GET() {
   try {
     const comisarías = await prisma.comisaria.findMany({
@@ -11,9 +12,16 @@ export async function GET() {
       orderBy: { nombre: 'asc' },
     });
 
-    const notificaciones = await prisma.notificacion.findMany({
+    const opcionesBusqueda = {
+      include: {
+        historialEstados: true,
+    },
       orderBy: { fechaCreacion: 'desc' },
-    });
+    } as Prisma.NotificacionFindManyArgs; // 👈 Casting tipado seguro de Prisma
+
+    const notificaciones = await prisma.notificacion.findMany(opcionesBusqueda);
+
+
 
     return NextResponse.json({ comisarías, notificaciones });
   } catch (error) {
@@ -22,7 +30,7 @@ export async function GET() {
   }
 }
 
-// POST: Crea una nueva notificación enviada por el juzgado
+// POST: Crea una nueva notificación enviada por el juzgado y registra el estado inicial
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -58,7 +66,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'El archivo adjunto se encuentra vacío' }, { status: 400 });
     }
 
-    const nuevaNotificacion = await prisma.notificacion.create({
+    // Definimos el objeto y usamos type assertion seguro para evitar el uso de 'any'
+    const queryCreacion = {
       data: {
         nroExpediente,
         caratula,
@@ -68,16 +77,32 @@ export async function POST(request: Request) {
         usuarioCreadorId: usuarioJudicial.id,
         pdfUrl: documentoUrl,
         estado: 'ENVIADA',
+        historialEstados: {
+          create: {
+            estado: 'ENVIADA',
+          },
+        },
       },
-    });
+      include: {
+        historialEstados: true,
+      },
+    } as Prisma.NotificacionCreateArgs;
+
+    const nuevaNotificacion = await prisma.notificacion.create(queryCreacion);
 
     const nuevoIdLog = crypto.randomUUID();
     const detallesLog = `Cédula emitida formalmente por el Juzgado. Documento alojado en el repositorio central de Vercel Blob.`;
     
-    await prisma.$executeRaw`
-      INSERT INTO "AuditLog" (id, accion, detalles, "notificacionId", "usuarioId", fecha)
-      VALUES (${nuevoIdLog}, 'EMISION_CEDULA', ${detallesLog}, ${nuevaNotificacion.id}, ${usuarioJudicial.id}, NOW())
-    `;
+    // Ejecutamos pasándole la query nativa limpia
+    await prisma.$executeRawUnsafe(
+      'INSERT INTO "AuditLog" (id, accion, detalles, "notificacionId", "usuarioId", fecha) VALUES ($1, $2, $3, $4, $5, NOW())',
+      nuevoIdLog,
+      'EMISION_CEDULA',
+      detallesLog,
+      nuevaNotificacion.id,
+      usuarioJudicial.id
+    );
+
 
     return NextResponse.json({ success: true, notificacion: nuevaNotificacion }, { status: 201 });
   } catch (error) {
@@ -89,7 +114,5 @@ export async function POST(request: Request) {
 function nombreArchivoSanitizado(nombre: string): string {
   return nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
-
-
 
 

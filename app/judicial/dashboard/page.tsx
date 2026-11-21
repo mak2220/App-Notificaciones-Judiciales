@@ -2,10 +2,16 @@
 'use client';
 
 import { useState, useEffect, FormEvent } from 'react';
-
+import Link from 'next/link';
 interface Comisaria {
   id: string;
   nombre: string;
+}
+
+interface HistorialEstado {
+  id: string;
+  estado: 'ENVIADA' | 'IMPRESA' | 'CUMPLIMENTADA' | 'FRUSTRADA';
+  fechaHora: string; 
 }
 
 interface Notificacion {
@@ -17,6 +23,7 @@ interface Notificacion {
   estado: 'ENVIADA' | 'IMPRESA' | 'CUMPLIMENTADA' | 'FRUSTRADA';
   pdfUrl: string; 
   fotoComprobanteUrl?: string | null;
+  historialEstados?: HistorialEstado[];
 }
 
 
@@ -46,20 +53,6 @@ export default function JudicialDashboard() {
 
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ texto: '', tipo: '' });
-
-   // 👈 NUEVO: Reinsertamos la función perdida que exige el botón de actualizar
-  const refrescarDatos = async () => {
-    try {
-      const res = await fetch('/api/judicial/notificaciones');
-      if (res.ok) {
-        const data = await res.json();
-        setComisarias(data.comisarías || []);
-        setNotificaciones(data.notificaciones || []);
-      }
-    } catch (err) {
-      console.error('Error refrescando datos desde el panel', err);
-    }
-  };
 
   useEffect(() => {
     let activo = true;
@@ -146,6 +139,50 @@ export default function JudicialDashboard() {
     }
   };
 
+   const refrescarDatos = async () => {
+    try {
+      const res = await fetch('/api/judicial/notificaciones');
+      if (res.ok) {
+        const data = await res.json();
+        setComisarias(data.comisarías || []);
+        setNotificaciones(data.notificaciones || []);
+      }
+    } catch (err) {
+      console.error('Error refrescando datos desde el panel', err);
+    }
+  };
+
+  useEffect(() => {
+    let activo = true;
+
+    // 1. Carga inicial declarada adentro (cumple con react-hooks/set-state-in-effect)
+    async function iniciarCarga() {
+      try {
+        const res = await fetch('/api/judicial/notificaciones');
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (activo) {
+          setComisarias(data.comisarías || []);
+          setNotificaciones(data.notificaciones || []);
+        }
+      } catch (err) {
+        console.error('Error en carga inicial', err);
+      }
+    }
+
+    iniciarCarga();
+
+    // 2. Polling automático cada 30 segundos (dentro del callback del intervalo sí está permitido)
+    const intervalo = setInterval(() => {
+      refrescarDatos();
+    }, 30000);
+
+    return () => {
+      activo = false;
+      clearInterval(intervalo);
+    };
+  }, []);
 
     return (
     <div className="min-h-screen bg-slate-50 p-6">
@@ -154,12 +191,12 @@ export default function JudicialDashboard() {
           <h1 className="text-xl font-bold text-slate-800">🏛️ Portal Poder Judicial</h1>
           <p className="text-xs text-slate-500">Juzgado de Garantías N° 1 - En línea</p>
         </div>
-        <button 
-          onClick={() => window.location.href = '/'}
+        <Link 
+          href = '/'
           className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-600 font-medium py-2 px-4 rounded-lg transition-colors"
         >
           Cerrar Sesión
-        </button>
+        </Link>
       </header>
 
       <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -332,64 +369,66 @@ export default function JudicialDashboard() {
                         </td>
                         <td className="p-3 text-slate-700 font-medium">{n.destinatario}</td>
                         <td className="p-3 text-slate-500 text-xs">{n.domicilio}</td>
-                        <td className="p-3 text-center">
-                          <span className={`px-2.5 py-1 text-xs font-bold rounded-full border ${
-                            n.estado === 'ENVIADA' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                            n.estado === 'IMPRESA' ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                            n.estado === 'CUMPLIMENTADA' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                            'bg-rose-50 text-rose-700 border-rose-200'
-                          }`}>
-                            {n.estado}
-                          </span>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                          <div className="flex flex-col items-start gap-1">
+                            {/* Tu etiqueta actual adaptada a tu variable 'n' */}
+                            <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${
+                              n.estado === 'ENVIADA' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                              n.estado === 'IMPRESA' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                              n.estado === 'CUMPLIMENTADA' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                              'bg-rose-50 text-rose-700 border border-rose-200'
+                            }`}>
+                              {n.estado}
+                            </span>
+
+                            {/* 🕒 NUEVO: Muestra la fecha y hora del cambio de estado */}
+                            {n.historialEstados && n.historialEstados.length > 0 ? (
+                              (() => {
+                                // Ordenamos cronológicamente para tomar el cambio más reciente
+                                const ordenados = [...n.historialEstados].sort(
+                                  (a, b) => new Date(b.fechaHora).getTime() - new Date(a.fechaHora).getTime()
+                                );
+                                // 🚀 CORREGIDO: Tomamos explícitamente el primer elemento del array ordenado
+                                const ultimoCambio = ordenados[0]; 
+
+                                if (!ultimoCambio || !ultimoCambio.fechaHora) return null;
+
+                                return (
+                                  <span className="text-[10px] text-slate-400 font-medium italic mt-0.5">
+                                    {new Date(ultimoCambio.fechaHora).toLocaleString('es-AR', {
+                                      day: '2-digit',
+                                      month: '2-digit',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })} hs
+                                  </span>
+                                );
+                              })()
+                            ) : (
+                              <span className="text-[10px] text-slate-400 font-medium italic mt-0.5">
+                                Sin fecha registrada
+                              </span>
+                            )}
+                          </div>
                         </td>
-                        <td className="p-3 text-right">
-                          {n.pdfUrl ? (
-                            <button 
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  const res = await fetch(`/api/judicial/download?url=${encodeURIComponent(n.pdfUrl)}`);
-                                  if (!res.ok) {
-                                    alert('No se pudo autorizar la lectura del documento.');
-                                    return;
-                                  }
-                                  const archivoBlob = await res.blob();
-                                  const urlDescargaUrl = window.URL.createObjectURL(archivoBlob);
-                                  const enlaceTemporal = document.createElement('a');
-                                  enlaceTemporal.href = urlDescargaUrl;
-                                  enlaceTemporal.download = n.pdfUrl.split('/').pop() || 'documento-judicial';
-                                  document.body.appendChild(enlaceTemporal);
-                                  enlaceTemporal.click();
-                                  document.body.removeChild(enlaceTemporal);
-                                  window.URL.revokeObjectURL(urlDescargaUrl);
-                                } catch (err) {
-                                  console.error(err);
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 text-xs bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 font-medium py-1.5 px-3 rounded-lg border border-slate-200 hover:border-blue-200 transition-colors cursor-pointer shadow-sm"
-                            >
-                              📄 Ver Documento
-                            </button>
-                          ) : (
-                            <span className="text-xs text-slate-400 italic">Sin archivo</span>
-                          )}
-                          {/* Botón 2: 📷 CONTROL DE AUDITORÍA (Acta firmada en la calle por la Policía) */}
-                          {(n.estado === 'CUMPLIMENTADA' || n.estado === 'FRUSTRADA') && (
-                            n.fotoComprobanteUrl ? (
-                              <button
+                        <td className="p-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {n.pdfUrl ? (
+                              <button 
                                 type="button"
                                 onClick={async () => {
                                   try {
-                                    const res = await fetch(`/api/judicial/download?url=${encodeURIComponent(n.fotoComprobanteUrl!)}`);
+                                    const res = await fetch(`/api/judicial/download?url=${encodeURIComponent(n.pdfUrl)}`);
                                     if (!res.ok) {
-                                      alert('No se pudo leer la firma digitalizada del acta.');
+                                      alert('No se pudo autorizar la lectura del documento.');
                                       return;
                                     }
                                     const archivoBlob = await res.blob();
                                     const urlDescargaUrl = window.URL.createObjectURL(archivoBlob);
                                     const enlaceTemporal = document.createElement('a');
                                     enlaceTemporal.href = urlDescargaUrl;
-                                    enlaceTemporal.download = n.fotoComprobanteUrl!.split('/').pop() || 'acta-diligencia';
+                                    enlaceTemporal.download = n.pdfUrl.split('/').pop() || 'documento-judicial';
                                     document.body.appendChild(enlaceTemporal);
                                     enlaceTemporal.click();
                                     document.body.removeChild(enlaceTemporal);
@@ -398,16 +437,51 @@ export default function JudicialDashboard() {
                                     console.error(err);
                                   }
                                 }}
-                                className="inline-flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1.5 px-3 rounded-lg transition-colors cursor-pointer shadow-sm border border-emerald-700"
-                                title="Descargar acta firmada digitalizada por la comisaría"
+                                className="inline-flex items-center gap-1.5 text-xs bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 font-medium py-1.5 px-3 rounded-lg border border-slate-200 hover:border-blue-200 transition-colors cursor-pointer shadow-sm"
                               >
-                                📷 Acta Digital
+                                📄 Ver Documento
                               </button>
                             ) : (
-                              <span className="text-xs text-slate-400 italic font-normal">Sin acta cargada</span>
-                            )
-                          )}
+                              <span className="text-xs text-slate-400 italic">Sin archivo</span>
+                            )}
+
+                            {/* Botón 2: 📷 CONTROL DE AUDITORÍA */}
+                            {(n.estado === 'CUMPLIMENTADA' || n.estado === 'FRUSTRADA') && (
+                              n.fotoComprobanteUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      const res = await fetch(`/api/judicial/download?url=${encodeURIComponent(n.fotoComprobanteUrl!)}`);
+                                      if (!res.ok) {
+                                        alert('No se pudo leer la firma digitalizada del acta.');
+                                        return;
+                                      }
+                                      const archivoBlob = await res.blob();
+                                      const urlDescargaUrl = window.URL.createObjectURL(archivoBlob);
+                                      const enlaceTemporal = document.createElement('a');
+                                      enlaceTemporal.href = urlDescargaUrl;
+                                      enlaceTemporal.download = n.fotoComprobanteUrl!.split('/').pop() || 'acta-diligencia';
+                                      document.body.appendChild(enlaceTemporal);
+                                      enlaceTemporal.click();
+                                      document.body.removeChild(enlaceTemporal);
+                                      window.URL.revokeObjectURL(urlDescargaUrl);
+                                    } catch (err) {
+                                      console.error(err);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1.5 px-3 rounded-lg transition-colors cursor-pointer shadow-sm border border-emerald-700"
+                                  title="Descargar acta firmada digitalizada por la comisaría"
+                                >
+                                  📷 Acta Digital
+                                </button>
+                              ) : (
+                                <span className="text-xs text-slate-400 italic font-normal">Sin acta cargada</span>
+                              )
+                            )}
+                          </div>
                         </td>
+                          
                       </tr>
                     );
                   })}
