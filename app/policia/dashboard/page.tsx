@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import crypto from 'crypto'
 import Link from 'next/link'
 import { put } from '@vercel/blob'
-import { TablaCedulasPolicia } from '@/app/components/TablasCedulasPolicia'
+import { TablaCedulasPolicia } from '@/app/components/TablasCedulas'
 
 interface NotificacionConCreador {
   id: string
@@ -82,6 +82,16 @@ async function resolverNotificacion(formData: FormData) {
       access: 'private',
     })
     fotoComprobanteUrl = blob.url
+  }
+
+    // Verificamos el estado actual en la base de datos antes de permitir guardar
+  const actual = await prisma.notificacion.findUnique({
+    where: { id },
+    select: { estado: true }
+  });
+
+  if (!actual || actual.estado === 'CUMPLIMENTADA' || actual.estado === 'FRUSTRADA') {
+    throw new Error('Operación denegada: esta cédula ya se encuentra cerrada.');
   }
 
   await prisma.notificacion.update({
@@ -261,104 +271,7 @@ export default async function PoliciaDashboard({
           notificaciones={notificaciones} 
           seleccionadaId={params.id} 
         />
-                {/* COLUMNA DERECHA: CONTROL DE CÉDULAS RECIBIDAS 
-        <section className="lg:col-span-8 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-          <h2 className="text-lg font-bold text-slate-900 border-b pb-3 mb-4">
-            Control de Cédulas Recibidas
-          </h2>
-
-          {notificaciones.length === 0 ? (
-            <div className="text-center py-12 text-slate-400 text-sm">
-              No hay directivas judiciales registradas en esta seccional.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-400 text-xs font-semibold uppercase tracking-wider bg-slate-50/70">
-                    <th className="py-3 px-4">Expediente</th>
-                    <th className="py-3 px-4">Carátula / Juzgado</th>
-                    <th className="py-3 px-4">Destinatario</th>
-                    <th className="py-3 px-4 text-center">Estado</th>
-                    <th className="py-3 px-4 text-right">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                {notificaciones.map((n: NotificacionConCreador) => {
-                  const esSeleccionada = params.id === n.id;
-                  return (
-                    <tr 
-                      key={n.id} 
-                      className={`transition-colors border-b border-slate-100 ${
-                        esSeleccionada ? 'bg-blue-50/60' : 'hover:bg-slate-50/80'
-                      }`}
-                    >
-                      <td className="py-4 px-4 font-mono text-xs font-semibold text-slate-600">
-                        <Link href={`?id=${n.id}`} className="block w-full h-full">{n.nroExpediente}</Link>
-                      </td>
-                      
-                      <td className="py-4 px-4">
-                        <Link href={`?id=${n.id}`} className="block w-full h-full">
-                          <p className="font-medium text-slate-900">{n.caratula}</p>
-                          <p className="text-xs text-slate-400">{n.usuarioCreador?.nombre}</p>
-                        </Link>
-                      </td>
-                    
-                      <td className="py-4 px-4">
-                        <Link href={`?id=${n.id}`} className="block w-full h-full">
-                          <p className="text-slate-700">{n.destinatario}</p>
-                          <p className="text-xs text-slate-400 truncate max-w-[200px]">{n.domicilio}</p>
-                        </Link>
-                      </td>
-                    
-                      <td className="py-4 px-4 text-center">
-                        <div className="flex flex-col items-center gap-1.5">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${obtenerEstilosBadge(n.estado)}`}>
-                            {n.estado}
-                          </span>
-                          {n.fotoComprobanteUrl && (
-                            <Link 
-                              href={`?id=${n.id}&ver=${encodeURIComponent(n.fotoComprobanteUrl)}`}
-                              className="text-xs text-blue-600 underline font-medium hover:text-blue-800 flex items-center gap-0.5"
-                            >
-                              📎 Ver acta
-                            </Link>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="py-4 px-4 text-right align-middle">
-                        <div className="flex flex-col items-end gap-2">
-                          <div className="flex items-center gap-2">
-                            {n.estado === 'ENVIADA' && (
-                              <a 
-                                href={`/api/policia/descargar?id=${n.id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium px-2.5 py-1.5 rounded-lg transition-colors flex items-center gap-1 shadow-sm inline-block cursor-pointer"
-                              >
-                                🖨️ Imprimir
-                              </a>
-                            )}
-                            <Link 
-                              href={`?id=${n.id}`}
-                              className="inline-block text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1.5 rounded-lg font-medium transition-colors shadow-sm"
-                            >
-                              Procesar
-                            </Link>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              </table>
-            </div>
-          )}
-        </section>*/}
       </main>
-
       {/* MODAL VISUALIZADOR DE ACTAS */}
       {archivoAVer && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">

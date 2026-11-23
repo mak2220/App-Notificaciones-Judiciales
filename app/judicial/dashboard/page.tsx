@@ -1,8 +1,10 @@
 //app/judicial/dashboard/page.tsx
 'use client';
 
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect, useMemo, FormEvent } from 'react';
 import Link from 'next/link';
+import { BuscadorCedulas } from '@/app/components/TablasCedulas';
+import { coincideNotificacion } from '@/app/utils/busquedaNotificaciones';
 interface Comisaria {
   id: string;
   nombre: string;
@@ -39,17 +41,26 @@ export default function JudicialDashboard() {
   // 📎 NUEVO ESTADO: Guarda el archivo seleccionado en la computadora antes de enviarlo
   const [documentoJudicial, setDocumentoJudicial] = useState<File | null>(null);
     // 🔍 NUEVO ESTADO: Para capturar el número de expediente a destacar
-  const [expedienteBuscado, setExpedienteBuscado] = useState('');
-  const notificacionesOrdenadas = [...notificaciones].sort((a, b) => {
- 
-    if (expedienteBuscado.trim() !== '') {
-      const coincideA = a.nroExpediente.toLowerCase().includes(expedienteBuscado.toLowerCase());
-      const coincideB = b.nroExpediente.toLowerCase().includes(expedienteBuscado.toLowerCase());
+    const [expedienteBuscado, setExpedienteBuscado] = useState('');
+  const [filtroEstado, setFiltroEstado] = useState<string>('TODAS');
+
+  const notificacionesOrdenadas = useMemo(() => {
+    const filtradas = filtroEstado === 'TODAS'
+      ? notificaciones
+      : notificaciones.filter((n) => n.estado === filtroEstado);
+
+    if (!expedienteBuscado.trim()) return filtradas;
+
+    return [...filtradas].sort((a, b) => {
+      const coincideA = coincideNotificacion(a, expedienteBuscado);
+      const coincideB = coincideNotificacion(b, expedienteBuscado);
       if (coincideA && !coincideB) return -1;
       if (!coincideA && coincideB) return 1;
-    }
-    return 0; 
-  });
+      return 0;
+    });
+  }, [notificaciones, expedienteBuscado, filtroEstado]);
+
+
 
   const [loading, setLoading] = useState(false);
   const [mensaje, setMensaje] = useState({ texto: '', tipo: '' });
@@ -223,7 +234,7 @@ export default function JudicialDashboard() {
               <label className="block text-xs font-semibold text-slate-600 mb-1">Carátula / Autos</label>
               <input 
                 type="text" required value={caratula} onChange={(e) => setCaratula(e.target.value)}
-                placeholder="Pérez Juan s/ Hurto" className="w-full text-sm px-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-900 bg-white"
+                placeholder="Ej. 'Perez s/Hurto'" className="w-full text-sm px-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 text-slate-900 bg-white"
               />
             </div>
 
@@ -300,31 +311,14 @@ export default function JudicialDashboard() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-3 mb-4">
             <h2 className="text-lg font-bold text-slate-800">Control de Cédulas Enviadas</h2>
             
-            {/* 🔍 CUADRO DE BÚSQUEDA FLOTANTE */}
-            <div className="relative w-full sm:w-72">
-              <span className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400 text-xs">
-                🔍
-              </span>
-              <input
-                type="text"
-                value={expedienteBuscado}
-                onChange={(e) => setExpedienteBuscado(e.target.value)}
-                placeholder="Buscar y destacar expediente..."
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-800 transition-all placeholder:text-slate-400"
-              />
-              {expedienteBuscado.trim() !== '' && (
-                <button
-                  type="button"
-                  onClick={() => setExpedienteBuscado('')}
-                  className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
-                  title="Limpiar búsqueda"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
+            <BuscadorCedulas
+              busqueda={expedienteBuscado}
+              onBusquedaChange={setExpedienteBuscado}
+              filtroEstado={filtroEstado}
+              onFiltroEstadoChange={setFiltroEstado}
+              totalNotificaciones={notificaciones.length}
+            />
           </div>
-
           {/* INDICADOR DE REORDENAMIENTO ACTIVO */}
           {expedienteBuscado.trim() !== '' && (
             <div className="mb-3 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg text-xs font-medium text-blue-700 flex items-center gap-1.5 animate-pulse">
@@ -333,12 +327,15 @@ export default function JudicialDashboard() {
             </div>
           )}
           
-          {notificaciones.length === 0 ? (
+                    {notificacionesOrdenadas.length === 0 ? (
             <div className="text-center py-12 text-slate-400 text-sm">
               <span className="text-3xl block mb-2">📋</span>
-              Las cédulas que envíes aparecerán acá en tiempo real trackeando el estado de la policía.
+              {notificaciones.length === 0
+                ? 'Las cédulas que envíes aparecerán acá en tiempo real trackeando el estado de la policía.'
+                : 'No se encontraron cédulas con los filtros aplicados.'}
             </div>
           ) : (
+
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse text-sm">
                 <thead>
@@ -352,8 +349,8 @@ export default function JudicialDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {notificacionesOrdenadas.map((n) => {
-                    const esDestacada = expedienteBuscado.trim() !== '' && 
-                      n.nroExpediente.toLowerCase().includes(expedienteBuscado.toLowerCase());
+                    const esDestacada = coincideNotificacion(n, expedienteBuscado);
+
                     return (
                       <tr 
                         key={n.id} 
